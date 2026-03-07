@@ -27,15 +27,15 @@ import moviepy as mp
 enablePrint()
 
 
-model_id = "1294-ai-scouting/10"
+model_id = "1294-ai-scouting/13"
 input_video_path = "matches/match.mp4"
 output_path = "temp/output.json"
 
-target_fps = 30
+target_fps = 10
 clip = mp.VideoFileClip(input_video_path)
 total_frames = clip.n_frames
 
-clip.save_frame("matches/cover.png", t=0)
+clip.save_frame("matches/cover.png", t=5)
 
 
 output = sv.JSONSink(output_path)
