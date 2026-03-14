@@ -49,17 +49,20 @@ public class Visualization extends JPanel {
             throw new RuntimeException("Error loading data for team " + teamNumber + ". Likely causes: incorrect team number format or file not found.");
         }
         String line;
+        int lineCount = 0;
         while ((line = br.readLine()) != null) {
             String[] values = line.split(",");
 
             if (values.length == 3) {
                 try {
-
-                    boolean isAuto = Boolean.parseBoolean(values[0]);
-                    double x = Double.parseDouble(values[1]);
-                    double y = Double.parseDouble(values[2]);
-                    points.add(Optional.of(new Point(x, y)));
-                    states.add(Optional.of(isAuto));
+                    if (lineCount % 2 == 0) { // Skip every other line to reduce the number of points drawn and improve visualization performance (optional, can be removed if you want to draw every point)
+                        boolean isAuto = Boolean.parseBoolean(values[0]);
+                        double x = Double.parseDouble(values[1]);
+                        double y = Double.parseDouble(values[2]);
+                        points.add(Optional.of(new Point(x, y)));
+                        states.add(Optional.of(isAuto));
+                    }
+                    lineCount++;
 
                 } catch (Exception e) {
                     System.out.println("Error parsing line: \"" + line + "\". Skipping this line.");
@@ -69,6 +72,7 @@ public class Visualization extends JPanel {
             } else {
                 points.add(Optional.empty());
                 states.add(Optional.empty());
+                lineCount = 0; // Reset line count for the next set of data (if there are multiple sets in the same file)
             }
         }
         br.close();
@@ -134,7 +138,7 @@ public class Visualization extends JPanel {
 
         Graphics2D g2d = (Graphics2D) g;
 
-        for (int i = 0; i < points.size() && i < states.size(); i+=2) {
+        for (int i = 0; i < points.size() && i < states.size(); i++) {
             Optional<Point> point = points.get(i);
             Optional<Boolean> isAuto = states.get(i);
 
@@ -155,7 +159,16 @@ public class Visualization extends JPanel {
                         g2d.setPaint(new GradientPaint(x1, y1, Color.CYAN, x2, y2, Color.BLUE, false));
                         g2d.drawLine(x1, y1, x2, y2);
                     }
-                } 
+                } else {
+                    g.setColor(Color.ORANGE);
+                    g2d.setPaint(new GradientPaint(x1, y1, Color.YELLOW, x2, y2, Color.ORANGE, false));
+                    g2d.drawLine(x1, y1, x2, y2);
+                }
+            } else if (point.isPresent()){
+                int x = (int) (point.get().getX() * WIDTH);
+                int y = (int) (point.get().getY() * HEIGHT);
+                g.setColor(Color.YELLOW);
+                g2d.fillOval(x - 15, y - 15, 30, 30);
             }
             prevPoint = point;
             prevIsAuto = isAuto;

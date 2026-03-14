@@ -115,7 +115,7 @@ public class AIScout extends JPanel{
             startingDetections = detections.get(firstFrameIndex);
         } catch (IllegalStateException e){
             System.out.println("Cannot automatically confirm starting point. Please manually input the starting locations of the robots in the format specified below. If a robot no shows, do not enter a y coordinate for it.");
-            System.out.println("Please input the y coordinates (0.0 - 1.0, where 0.0 is closest to the near wall of the field) of the starting locations of robots towards the LEFT side of the field, separated by spaces:");
+            System.out.println("Please input the y coordinates (0.0 - 1.0, where 0.0 is closest to the far wall of the field) of the starting locations of robots towards the LEFT side of the field, separated by spaces:");
             String leftInput = scanner.nextLine();
             String[] leftCoords = leftInput.trim().split(" ");
             if (leftCoords.length != leftShows) {
@@ -136,7 +136,7 @@ public class AIScout extends JPanel{
                 }
             }
 
-            System.out.println("Please input the y coordinates (0.0 - 1.0, where 0.0 is closest to the near wall of the field) of the starting locations of robots towards the RIGHT side of the field, separated by spaces:");
+            System.out.println("Please input the y coordinates (0.0 - 1.0, where 0.0 is closest to the far wall of the field) of the starting locations of robots towards the RIGHT side of the field, separated by spaces:");
             String rightInput = scanner.nextLine();
             String[] rightCoords = rightInput.trim().split(" ");
             if (rightCoords.length != rightShows) {
