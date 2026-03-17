@@ -34,11 +34,34 @@ public class AIScout extends JPanel{
 
     // Currently calibrated for PNW District Bnuuy Lake Event 2026
     // Can be easily changed for other fields by changing these 4 points
+    // Or by using the interactive field calibrator (drag-and-drop GUI)
 
-    private static final Point TOP_LEFT = new Point(0.24063, 0.21806);
-    private static final Point BOTTOM_LEFT = new Point(0.08609, 0.62778);
-    private static final Point TOP_RIGHT = new Point(0.77969, 0.22639);
-    private static final Point BOTTOM_RIGHT = new Point(0.94609, 0.64167);
+    // Default values (used if no calibration file exists)
+    private static final double DEFAULT_TL_X = 0.22063, DEFAULT_TL_Y = 0.23806;
+    private static final double DEFAULT_BL_X = 0.06609, DEFAULT_BL_Y = 0.67778;
+    private static final double DEFAULT_TR_X = 0.77969, DEFAULT_TR_Y = 0.22639;
+    private static final double DEFAULT_BR_X = 0.94609, DEFAULT_BR_Y = 0.64167;
+
+    // Active calibration points (loaded from file or defaults)
+    private static Point TOP_LEFT;
+    private static Point BOTTOM_LEFT;
+    private static Point TOP_RIGHT;
+    private static Point BOTTOM_RIGHT;
+
+    static {
+        double[] cal = FieldCalibrator.loadCalibration();
+        if (cal != null) {
+            TOP_LEFT     = new Point(cal[0], cal[1]);
+            BOTTOM_LEFT  = new Point(cal[2], cal[3]);
+            TOP_RIGHT    = new Point(cal[4], cal[5]);
+            BOTTOM_RIGHT = new Point(cal[6], cal[7]);
+        } else {
+            TOP_LEFT     = new Point(DEFAULT_TL_X, DEFAULT_TL_Y);
+            BOTTOM_LEFT  = new Point(DEFAULT_BL_X, DEFAULT_BL_Y);
+            TOP_RIGHT    = new Point(DEFAULT_TR_X, DEFAULT_TR_Y);
+            BOTTOM_RIGHT = new Point(DEFAULT_BR_X, DEFAULT_BR_Y);
+        }
+    }
     protected static final boolean RED_ON_LEFT = true; // Whether the red alliance is on the left side of the field in the video. If false, then the blue alliance is on the left.
 
     public AIScout() {
@@ -68,11 +91,29 @@ public class AIScout extends JPanel{
 
         Scanner scanner = new Scanner(System.in);
         if (!scanner.nextLine().equalsIgnoreCase("y")) {
-            scanner.close();
             frame.dispose();
-            throw new IllegalStateException("Field not properly aligned. Please adjust TOP_LEFT, BOTTOM_LEFT, TOP_RIGHT, BOTTOM_RIGHT, and RED_ON_LEFT so that the green lines are exactly on the field boundaries and the alliances match, then try again.");
+            System.out.println("Opening field calibration tool... Drag the yellow dots to the field corners, then click Save & Exit.");
+            double[] result = FieldCalibrator.launch(
+                TOP_LEFT.getX(), TOP_LEFT.getY(),
+                BOTTOM_LEFT.getX(), BOTTOM_LEFT.getY(),
+                TOP_RIGHT.getX(), TOP_RIGHT.getY(),
+                BOTTOM_RIGHT.getX(), BOTTOM_RIGHT.getY()
+            );
+            if (result == null) {
+                scanner.close();
+                throw new IllegalStateException("Field calibration was cancelled. Exiting.");
+            }
+            // Update the calibration points with the new values
+            TOP_LEFT     = new Point(result[0], result[1]);
+            BOTTOM_LEFT  = new Point(result[2], result[3]);
+            TOP_RIGHT    = new Point(result[4], result[5]);
+            BOTTOM_RIGHT = new Point(result[6], result[7]);
+            System.out.println("Field calibration saved successfully! Continuing with new calibration values...");
+            // Re-run detection with updated calibration
+            detections = detect();
+        } else {
+            frame.dispose();
         }
-        frame.dispose();
         
 
         // Finds the first frame with 6 robots detected
@@ -248,6 +289,8 @@ public class AIScout extends JPanel{
 
     public static ArrayList<ArrayList<Optional<Point>>> detect() {
         // Run detector, then read the output
+        autoFrameIndices.clear();
+        teleFrameIndices.clear();
         ArrayList<ArrayList<Optional<Point>>> allDetections = new ArrayList<>();
 
         ArrayList<Detection> detections = new ArrayList<>();
