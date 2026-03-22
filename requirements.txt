@@ -6,6 +6,8 @@ inference
 moviepy
 supervision
 roboflow
+flask
+requests
 
 # Note: The following non-Python dependencies must also be installed:
 # - Node.js (https://nodejs.org) - required for YouTube bot-detection bypass
