@@ -31,9 +31,11 @@ fi
 read -p "Need 2 run Analyzer? (y/n) " analyze
 if [[ "$analyze" =~ ^[Yy]$ ]]; then
 
+    read -p "Event key (e.g. 2025pnwsc): " event_key
+
     echo "Enter team numbers of the FRC robots that you are scouting"
     echo "1. in order from closest to furthest away from camera"
-    echo "2. separated by spaces"
+    echo "2. separated by spaces (exactly 3 per side)"
     echo "3. with no trailing whitespace"
     echo "4. enter no_show if a team fails to make a good faith effort in attending the match"
     echo "------------------------------------"
@@ -41,7 +43,7 @@ if [[ "$analyze" =~ ^[Yy]$ ]]; then
     read -p "Team numbers of robots towards the right side of the field:" right
 
     javac src/*.java json/*.java
-    java -cp "src:json" AIScout $left $right
+    java -cp "src:json" AIScout $event_key $left $right
 
     if [ $? -ne 0 ]; then
         echo "Analyzer failed with error code $?"

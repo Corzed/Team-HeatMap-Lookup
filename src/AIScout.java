@@ -25,64 +25,80 @@ public class AIScout extends JPanel{
     private static HashSet<Integer> autoFrameIndices = new HashSet<>();
     private static HashSet<Integer> teleFrameIndices = new HashSet<>();
     private static final long serialVersionUID = 1L; //Recommended for JPanel subclasses
-    
-    //Relative locations of field joints (i.e. 0.5 is half of the screen)
-    //Ideally, all x & y vals must differ to avoid errors in pose estimation
 
-    // Relative locations of field joints (i.e. 0.5 is half of the screen)
-    // All x vals must differ to avoid errors in pose estimation
-
-    // Currently calibrated for PNW District Sammamish Event 2025
-    // Can be easily changed for other fields by changing these 4 points
-
-    private static final Point TOP_LEFT = new Point(0.19620, 0.19515);
-    private static final Point BOTTOM_LEFT = new Point(0.02259, 0.69198);
-    private static final Point TOP_RIGHT = new Point(0.84483, 0.21941);
-    private static final Point BOTTOM_RIGHT = new Point(0.98811, 0.72152);
-    protected static final boolean RED_ON_LEFT = true; // Whether the red alliance is on the left side of the field in the video. If false, then the blue alliance is on the left.
+    // Field calibration — loaded from calibrations/{event_key}.json or calibrations/default.json
+    protected static Point TOP_LEFT;
+    protected static Point BOTTOM_LEFT;
+    protected static Point TOP_RIGHT;
+    protected static Point BOTTOM_RIGHT;
+    protected static boolean RED_ON_LEFT;
 
     public AIScout() {
         //Empty constructor for JPanel subclass
     }
 
     public static void main(String[] args) throws IOException {
-        
-        if (args.length != 6) {
-            throw new IllegalArgumentException("Exactly 6 team numbers must be provided as arguments, not " + args.length);
+        // Argument structure:
+        //   args[0]   = event_key
+        //   args[1-3] = red alliance team numbers (or "no_show")
+        //   args[4-6] = blue alliance team numbers (or "no_show")
+        //   Optional flags (after position args):
+        //     --auto          skip all user confirmations (for automated/web use)
+        //     --json <path>   override default temp/output.json path
+
+        if (args.length < 7) {
+            throw new IllegalArgumentException(
+                "Usage: AIScout <event_key> <red1> <red2> <red3> <blue1> <blue2> <blue3> [--auto] [--json <path>]"
+            );
         }
-        ArrayList<ArrayList<Optional<Point>>> detections = detect();
 
-        JPanel confirm = new AIScout();
+        String eventKey = args[0];
+        String[] teamArgs = Arrays.copyOfRange(args, 1, 7);
 
-        JFrame frame = new JFrame();
-        frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-        frame.setResizable(false);
-        frame.setSize((int) Visualization.WIDTH/2, (int) Visualization.HEIGHT/2);
-        frame.setLocation(0, 0);
-        frame.setName("The P.A.C.K. (Predictive, Analytical, and Competitive Knowledge-base) Field Calibration Confirmation");
-        frame.setTitle("The P.A.C.K. (Predictive, Analytical, and Competitive Knowledge-base) Field Calibration Confirmation");
-        frame.setIconImage(ImageIO.read(new File("pop.png")));
-        frame.add(confirm);
-        frame.setVisible(true);
-        System.out.println("Is field properly aligned and the alliances consistent in the window that just opened? (y/n)");
+        boolean autoMode = false;
+        String jsonPath = "temp/output.json";
 
-        Scanner scanner = new Scanner(System.in);
-        if (!scanner.nextLine().equalsIgnoreCase("y")) {
-            scanner.close();
+        for (int i = 7; i < args.length; i++) {
+            if (args[i].equals("--auto")) {
+                autoMode = true;
+            } else if (args[i].equals("--json") && i + 1 < args.length) {
+                jsonPath = args[++i];
+            }
+        }
+
+        // Load calibration from JSON file
+        loadCalibration(eventKey);
+
+        ArrayList<ArrayList<Optional<Point>>> detections = detect(jsonPath);
+
+        if (!autoMode) {
+            JPanel confirm = new AIScout();
+            JFrame frame = new JFrame();
+            frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+            frame.setResizable(false);
+            frame.setSize((int) Visualization.WIDTH/2, (int) Visualization.HEIGHT/2);
+            frame.setLocation(0, 0);
+            frame.setName("The P.A.C.K. (Predictive, Analytical, and Competitive Knowledge-base) Field Calibration Confirmation");
+            frame.setTitle("The P.A.C.K. (Predictive, Analytical, and Competitive Knowledge-base) Field Calibration Confirmation");
+            try { frame.setIconImage(ImageIO.read(new File("pop.png"))); } catch (Exception e) { /* icon optional */ }
+            frame.add(confirm);
+            frame.setVisible(true);
+            System.out.println("Is field properly aligned and the alliances consistent in the window that just opened? (y/n)");
+            Scanner scanner = new Scanner(System.in);
+            if (!scanner.nextLine().equalsIgnoreCase("y")) {
+                scanner.close();
+                frame.dispose();
+                throw new IllegalStateException("Field not properly aligned. Please adjust the calibration JSON and try again.");
+            }
             frame.dispose();
-            throw new IllegalStateException("Field not properly aligned. Please adjust TOP_LEFT, BOTTOM_LEFT, TOP_RIGHT, BOTTOM_RIGHT, and RED_ON_LEFT so that the green lines are exactly on the field boundaries and the alliances match, then try again.");
+            scanner.close();
         }
-        frame.dispose();
-        
-
-        // Finds the first frame with 6 robots detected
-        int firstFrameIndex = 0;
 
         int amountShows = 0;
         int leftShows = 0;
         int rightShows = 0;
-        for (int i = 0; i < args.length; i++) {
-            if (!args[i].equals("no_show")) {
+        for (int i = 0; i < teamArgs.length; i++) {
+            if (!teamArgs[i].equals("no_show")) {
                 amountShows++;
                 if (i < 3) {
                     leftShows++;
@@ -91,43 +107,48 @@ public class AIScout extends JPanel{
                 }
             }
         }
+
         FRCRobot[] robots = new FRCRobot[amountShows];
         int insertionIndex = 0;
+
+        // Find first frame with expected number of robots
+        int firstFrameIndex = 0;
         while (firstFrameIndex < detections.size() && detections.get(firstFrameIndex).size() != amountShows) {
             firstFrameIndex++;
         }
         if (firstFrameIndex >= detections.size()) {
-            scanner.close();
-            throw new IllegalStateException("Cannot confirm starting point. No frame with " + amountShows + " robots detected found in the video. Please abandon this video and try another one, or check that the detector is working correctly. Exiting");
+            throw new IllegalStateException(
+                "Cannot confirm starting point. No frame with " + amountShows + " robots detected found. "
+                + "Please try another video or check that the detector is working correctly."
+            );
         }
 
-
-        System.out.println("First frame with " + amountShows + " robots detected is at index " + firstFrameIndex + " (which is about " + Math.round(firstFrameIndex * 1000.0 / detections.size()) / 10.0 + "% of the video). Confirm as starting point? (y/n)");
-
-        if (!scanner.nextLine().equalsIgnoreCase("y")) {
+        if (!autoMode) {
+            System.out.println("First frame with " + amountShows + " robots detected is at index " + firstFrameIndex
+                    + " (which is about " + Math.round(firstFrameIndex * 1000.0 / detections.size()) / 10.0
+                    + "% of the video). Confirm as starting point? (y/n)");
+            Scanner scanner = new Scanner(System.in);
+            if (!scanner.nextLine().equalsIgnoreCase("y")) {
+                scanner.close();
+                throw new IllegalStateException("Starting point not confirmed. Exiting.");
+            }
             scanner.close();
-            throw new IllegalStateException("Starting point not confirmed. Exiting.");
+        } else {
+            System.out.println("Auto mode: using frame " + firstFrameIndex + " as starting point ("
+                    + Math.round(firstFrameIndex * 1000.0 / detections.size()) / 10.0 + "% through video).");
         }
-        scanner.close();
 
         long time = System.currentTimeMillis();
-
         System.out.println("Starting point confirmed. Initializing robots and writing data...");
 
         ArrayList<Optional<Point>> startingDetections = detections.get(firstFrameIndex);
 
-        // Splits frame into left and right halvesby x value, then sorts each half by y
-        // value, then concatenates the halves back together. This way, the robots are
-        // ordered from top left to bottom right, which should be consistent with the
-        // order of team numbers in args
         startingDetections.sort(Comparator.comparing(Optional::get, Comparator.comparing(Point::getX)));
 
-        // split array in half & find out how many noshows are there.
-        String[] firstHalf = Arrays.copyOfRange(args, 0, 3);
-        String[] secondHalf = Arrays.copyOfRange(args, 3, args.length);
+        String[] firstHalf = Arrays.copyOfRange(teamArgs, 0, 3);
+        String[] secondHalf = Arrays.copyOfRange(teamArgs, 3, teamArgs.length);
 
         List<Optional<Point>> leftHalf = startingDetections.subList(0, leftShows);
-
         leftHalf.sort(Comparator.comparing(Optional::get, Comparator.comparing(Point::getY).reversed()));
 
         List<Optional<Point>> rightHalf = startingDetections.subList(leftShows, leftShows + rightShows);
@@ -137,7 +158,7 @@ public class AIScout extends JPanel{
         for (int i = 0; i < firstHalf.length; i++) {
             if (!firstHalf[i].equals("no_show")) {
                 Point coord = leftHalf.get(pointIndex).get();
-                robots[insertionIndex] = new FRCRobot(coord, firstHalf[i]);
+                robots[insertionIndex] = new FRCRobot(coord, firstHalf[i], eventKey);
                 insertionIndex++;
                 pointIndex++;
             }
@@ -146,14 +167,13 @@ public class AIScout extends JPanel{
         for (int i = 0; i < secondHalf.length; i++) {
             if (!secondHalf[i].equals("no_show")) {
                 Point coord = rightHalf.get(pointIndex).get();
-                robots[insertionIndex] = new FRCRobot(coord, secondHalf[i]);
+                robots[insertionIndex] = new FRCRobot(coord, secondHalf[i], eventKey);
                 insertionIndex++;
                 pointIndex++;
             }
         }
 
-        // For every frame, assign robots new positions using Hungarian Algorithm and
-        // writes data to robot files
+        // For every frame, assign robots new positions using Hungarian Algorithm
         for (int i = firstFrameIndex + 1; i < detections.size(); i++) {
             System.out.print("\r");
 
@@ -162,21 +182,13 @@ public class AIScout extends JPanel{
             String display = String.format("%.1f", percent * 100);
 
             System.out.print("Analyzing... |");
-
-            for (int j = 0; j < hashtags; j++) {
-                System.out.print("#");
-            }
-            for (int j = 0; j < 10 - hashtags; j++) {
-                System.out.print("-");
-            }
+            for (int j = 0; j < hashtags; j++) System.out.print("#");
+            for (int j = 0; j < 10 - hashtags; j++) System.out.print("-");
             System.out.print("| " + display + "% (" + i + "/" + (detections.size() - 1) + " frames)");
 
             ArrayList<Optional<Point>> frameDetections = detections.get(i);
-            if (frameDetections.size() == 0) {
-                continue;
-            }
-            // Create cost matrix for Hungarian Algorithm, where the cost is the distance
-            // between the robot's current position and the detected position
+            if (frameDetections.size() == 0) continue;
+
             double[][] costMatrix = new double[amountShows][frameDetections.size()];
             for (int j = 0; j < amountShows; j++) {
                 for (int k = 0; k < frameDetections.size(); k++) {
@@ -185,8 +197,6 @@ public class AIScout extends JPanel{
             }
 
             int[] assignment = new HungarianAlgorithm(costMatrix).execute();
-
-            // Update robot positions based on Hungarian Algorithm assignment
             for (int j = 0; j < assignment.length; j++) {
                 if (assignment[j] != -1) {
                     robots[j].updatePosition(frameDetections.get(assignment[j]).get(), autoFrameIndices.contains(i));
@@ -195,7 +205,6 @@ public class AIScout extends JPanel{
         }
 
         System.out.println(" Done!");
-
         System.out.println("Analysis complete. Writing data to files...");
         for (FRCRobot robot : robots) {
             robot.writeData();
@@ -204,26 +213,79 @@ public class AIScout extends JPanel{
                 + Math.round((System.currentTimeMillis() - time) / 100.0) / 10.0 + " seconds)");
     }
 
-    public static ArrayList<ArrayList<Optional<Point>>> detect() {
-        // Run detector, then read the output
-        ArrayList<ArrayList<Optional<Point>>> allDetections = new ArrayList<>();
+    /** Load calibration from calibrations/{eventKey}.json, falling back to calibrations/default.json */
+    private static void loadCalibration(String eventKey) {
+        String[] candidates = {
+            "calibrations" + File.separator + eventKey + ".json",
+            "calibrations" + File.separator + "default.json"
+        };
 
-        ArrayList<Detection> detections = new ArrayList<>();
+        JSONObject cal = null;
+        for (String path : candidates) {
+            File f = new File(path);
+            if (f.exists()) {
+                try {
+                    String content = new String(Files.readAllBytes(Paths.get(path)));
+                    cal = new JSONObject(content);
+                    System.out.println("Loaded calibration from: " + path);
+                    break;
+                } catch (Exception e) {
+                    System.err.println("Failed to read calibration file " + path + ": " + e.getMessage());
+                }
+            }
+        }
+
+        if (cal == null) {
+            // Hardcoded PNW District Sammamish 2025 as last resort
+            System.err.println("Warning: no calibration file found, using hardcoded PNW Sammamish 2025 values.");
+            TOP_LEFT     = new Point(0.19620, 0.19515);
+            BOTTOM_LEFT  = new Point(0.02259, 0.69198);
+            TOP_RIGHT    = new Point(0.84483, 0.21941);
+            BOTTOM_RIGHT = new Point(0.98811, 0.72152);
+            RED_ON_LEFT  = true;
+            return;
+        }
+
         try {
-            String jsonContent = new String(Files.readAllBytes(Paths.get("temp/output.json")));
+            JSONObject tl = cal.getJSONObject("top_left");
+            JSONObject bl = cal.getJSONObject("bottom_left");
+            JSONObject tr = cal.getJSONObject("top_right");
+            JSONObject br = cal.getJSONObject("bottom_right");
+            TOP_LEFT     = new Point(tl.getDouble("x"), tl.getDouble("y"));
+            BOTTOM_LEFT  = new Point(bl.getDouble("x"), bl.getDouble("y"));
+            TOP_RIGHT    = new Point(tr.getDouble("x"), tr.getDouble("y"));
+            BOTTOM_RIGHT = new Point(br.getDouble("x"), br.getDouble("y"));
+            RED_ON_LEFT  = cal.getBoolean("red_on_left");
+        } catch (Exception e) {
+            throw new RuntimeException("Malformed calibration JSON: " + e.getMessage(), e);
+        }
+    }
+
+    public static ArrayList<ArrayList<Optional<Point>>> detect(String jsonPath) {
+        ArrayList<ArrayList<Optional<Point>>> allDetections = new ArrayList<>();
+        ArrayList<Detection> detections = new ArrayList<>();
+
+        try {
+            String jsonContent = new String(Files.readAllBytes(Paths.get(jsonPath)));
             JSONArray detectionsArray = new JSONArray(jsonContent);
 
             for (int i = 0; i < detectionsArray.length(); i++) {
                 JSONObject detectionObject = detectionsArray.getJSONObject(i);
-                Detection detection = new Detection(detectionObject.getDouble("x_min"),
-                        detectionObject.getDouble("y_min"), detectionObject.getDouble("x_max"),
-                        detectionObject.getDouble("y_max"), detectionObject.getString("class_name"),
-                        detectionObject.getDouble("confidence"), detectionObject.getString("tracker_id"),
-                        detectionObject.getInt("frame_id"), detectionObject.getInt("class_id"),
-                        detectionObject.getInt("frame_width"), detectionObject.getInt("frame_height"));
+                Detection detection = new Detection(
+                    detectionObject.getDouble("x_min"),
+                    detectionObject.getDouble("y_min"),
+                    detectionObject.getDouble("x_max"),
+                    detectionObject.getDouble("y_max"),
+                    detectionObject.getString("class_name"),
+                    detectionObject.getDouble("confidence"),
+                    detectionObject.getString("tracker_id"),
+                    detectionObject.getInt("frame_id"),
+                    detectionObject.getInt("class_id"),
+                    detectionObject.getInt("frame_width"),
+                    detectionObject.getInt("frame_height")
+                );
                 detections.add(detection);
             }
-
         } catch (Exception e) {
             e.printStackTrace();
             System.exit(1);
@@ -241,7 +303,6 @@ public class AIScout extends JPanel{
                     ArrayList<Optional<Point>> frameDetections = new ArrayList<>();
                     if (det.getClassName().equals("Auto")) {
                         frameDetections.add(Optional.empty());
-
                     } else if (det.getClassName().equals("Robot")) {
                         Optional<Double> xCoord = estimateXcoord(new Point(centerX, centerY), TOP_LEFT, TOP_RIGHT,
                                 BOTTOM_LEFT, BOTTOM_RIGHT, 10, 0, 1);
@@ -249,11 +310,6 @@ public class AIScout extends JPanel{
                                 BOTTOM_LEFT, BOTTOM_RIGHT, 10, 0, 1);
                         if (xCoord.isPresent() && yCoord.isPresent()) {
                             frameDetections.add(Optional.of(new Point(xCoord.get(), yCoord.get())));
-                        } else {
-                            // Do nothing, cuz if the robot is outside the field, then we don't want to add
-                            // it to the detections
-                            // However, we still need to add an empty frame to allDetections to keep the
-                            // indices correct, which is done below
                         }
                     }
                     allDetections.add(frameDetections);
@@ -262,7 +318,6 @@ public class AIScout extends JPanel{
                     ArrayList<Optional<Point>> frameDetections = allDetections.get(allDetections.size() - 1);
                     if (det.getClassName().equals("Auto")) {
                         frameDetections.add(Optional.empty());
-
                     } else if (det.getClassName().equals("Robot")) {
                         Optional<Double> xCoord = estimateXcoord(new Point(centerX, centerY), TOP_LEFT, TOP_RIGHT,
                                 BOTTOM_LEFT, BOTTOM_RIGHT, 10, 0, 1);
@@ -270,15 +325,12 @@ public class AIScout extends JPanel{
                                 BOTTOM_LEFT, BOTTOM_RIGHT, 10, 0, 1);
                         if (xCoord.isPresent() && yCoord.isPresent()) {
                             frameDetections.add(Optional.of(new Point(xCoord.get(), yCoord.get())));
-                        } else {
-                            // Do nothing, cuz if the robot is outside the field, then we don't want to add
-                            // it to the detections
                         }
                     }
                 }
             }
-
         }
+
         for (int i = 0; i < allDetections.size(); i++) {
             int nullIndex = allDetections.get(i).indexOf(Optional.empty());
             boolean autoDetected = false;
@@ -298,35 +350,24 @@ public class AIScout extends JPanel{
 
     public static Optional<Double> estimateYcoord(Point robot, Point topLeft, Point topRight, Point bottomLeft,
             Point bottomRight, int iterations, double bound0, double bound1) {
-        // TODO Estimates the robot's y-coord with pose estimation
 
         if (iterations == 0) {
             return Optional.of((bound0 + bound1) / 2);
         }
 
-        // Create a line through topLeft and topRight
         Line lineTop = new Line(topLeft, topRight);
         if (!lineTop.isAbove(robot)) {
             return Optional.empty();
         }
 
-        // Create a line through bottomLeft and bottomRight
         Line lineBottom = new Line(bottomLeft, bottomRight);
         if (lineBottom.isAbove(robot)) {
             return Optional.empty();
         }
 
-        // Create a line through topLeft and bottomRight
         Line lineLeft = new Line(topLeft, bottomRight);
-
-        // Create a line through bottomLeft and topRight
         Line lineRight = new Line(bottomLeft, topRight);
-
-        // Find the lines' intersect
         Point intersect = lineLeft.intersection(lineRight);
-
-        // Create a line with the lines' slopes averaged and passing through the
-        // intersect point
         Line lineMid = new Line(intersect, (lineLeft.getSlope() + lineRight.getSlope()) / 2);
 
         Line sideLeft = new Line(topLeft, bottomLeft);
@@ -335,13 +376,11 @@ public class AIScout extends JPanel{
         Point leftIntersect = lineMid.intersection(sideLeft);
         Point rightIntersect = lineMid.intersection(sideRight);
 
-        // If point is above this line, then call recursively on the top half;
         if (!lineMid.isAbove(robot)) {
             return estimateYcoord(robot, topLeft, topRight, leftIntersect, rightIntersect, iterations - 1, bound0,
                     (bound0 + bound1) / 2);
         }
 
-        // Otherwise, call recursively on the bottom half
         return estimateYcoord(robot, leftIntersect, rightIntersect, bottomLeft, bottomRight, iterations - 1,
                 (bound0 + bound1) / 2, bound1);
     }
@@ -355,7 +394,7 @@ public class AIScout extends JPanel{
         }
         return Optional.empty();
     }
-    
+
     public void paint(Graphics g){
         super.paint(g);
 
@@ -364,7 +403,7 @@ public class AIScout extends JPanel{
         } catch (IOException e) {
             e.printStackTrace();
         }
-        
+
         Graphics2D g2d = (Graphics2D) g;
         g2d.setStroke(new BasicStroke(5f));
         g2d.setColor(Color.GREEN);
@@ -372,7 +411,7 @@ public class AIScout extends JPanel{
         g2d.drawLine((int) (TOP_LEFT.getX() * Visualization.WIDTH/2), (int) (TOP_LEFT.getY() * Visualization.HEIGHT/2), (int) (BOTTOM_LEFT.getX() * Visualization.WIDTH/2), (int) (BOTTOM_LEFT.getY() * Visualization.HEIGHT/2));
         g2d.drawLine((int) (BOTTOM_LEFT.getX() * Visualization.WIDTH/2), (int) (BOTTOM_LEFT.getY() * Visualization.HEIGHT/2), (int) (BOTTOM_RIGHT.getX() * Visualization.WIDTH/2), (int) (BOTTOM_RIGHT.getY() * Visualization.HEIGHT/2));
         g2d.drawLine((int) (TOP_RIGHT.getX() * Visualization.WIDTH/2), (int) (TOP_RIGHT.getY() * Visualization.HEIGHT/2), (int) (BOTTOM_RIGHT.getX() * Visualization.WIDTH/2), (int) (BOTTOM_RIGHT.getY() * Visualization.HEIGHT/2));
-        
+
         g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 23));
         if (RED_ON_LEFT) {
             g.setColor(Color.RED);
@@ -388,5 +427,5 @@ public class AIScout extends JPanel{
         g.dispose();
         g2d.dispose();
     }
-    
+
 }

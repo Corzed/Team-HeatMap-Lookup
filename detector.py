@@ -1,8 +1,13 @@
-import os, sys, time, math
+import os, sys, time, math, argparse
 from dotenv import load_dotenv
 
 
 load_dotenv(dotenv_path=".env")
+
+_parser = argparse.ArgumentParser(add_help=False)
+_parser.add_argument("--input", default="matches/match.mp4")
+_parser.add_argument("--output", default="temp/output.json")
+_args, _ = _parser.parse_known_args()
 
 start = time.time()
 
@@ -28,8 +33,8 @@ enablePrint()
 
 
 model_id = "1294-ai-scouting/10"
-input_video_path = "matches/match.mp4"
-output_path = "temp/output.json"
+input_video_path = _args.input
+output_path = _args.output
 
 target_fps = 30
 clip = mp.VideoFileClip(input_video_path)

@@ -1,0 +1,8 @@
+{
+  "_comment": "PNW District Sammamish Event 2025",
+  "top_left":     {"x": 0.19620, "y": 0.19515},
+  "bottom_left":  {"x": 0.02259, "y": 0.69198},
+  "top_right":    {"x": 0.84483, "y": 0.21941},
+  "bottom_right": {"x": 0.98811, "y": 0.72152},
+  "red_on_left":  true
+}

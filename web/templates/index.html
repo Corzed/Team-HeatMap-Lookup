@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The P.A.C.K. — Heatmap Viewer</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <span class="logo-pack">The P.A.C.K.</span>
+    <span class="logo-sub">Predictive, Analytical &amp; Competitive Knowledge-base</span>
+  </div>
+  <div class="header-note">2025 FRC Season</div>
+</header>
+
+<div class="layout">
+
+  <!-- ── LEFT PANEL ─────────────────────────────────────────────────────── -->
+  <aside class="panel-left">
+    <div class="search-box">
+      <label for="teamInput">Team Number</label>
+      <div class="input-row">
+        <input id="teamInput" type="number" min="1" placeholder="e.g. 1294" />
+        <button id="searchBtn" onclick="searchTeam()">Search</button>
+      </div>
+    </div>
+
+    <div id="teamInfo" class="team-info hidden"></div>
+
+    <div id="matchList" class="match-list"></div>
+  </aside>
+
+  <!-- ── RIGHT PANEL ────────────────────────────────────────────────────── -->
+  <main class="panel-right">
+    <div class="heatmap-header">
+      <div id="heatmapTitle" class="heatmap-title">Search for a team to get started</div>
+      <div class="mode-btns">
+        <button class="mode-btn active" data-mode="both"     onclick="setMode('both')">Both</button>
+        <button class="mode-btn"        data-mode="auto"     onclick="setMode('auto')">Auto</button>
+        <button class="mode-btn"        data-mode="tele"     onclick="setMode('tele')">Teleop</button>
+      </div>
+    </div>
+
+    <div class="canvas-wrap">
+      <canvas id="heatmap"></canvas>
+      <div id="canvasPlaceholder" class="canvas-placeholder">
+        <div class="placeholder-text">
+          <span class="placeholder-icon">&#9654;</span>
+          <span>Select a processed match to view heatmap</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="teamChips" class="team-chips"></div>
+  </main>
+</div>
+
+<!-- ── TOAST ──────────────────────────────────────────────────────────────── -->
+<div id="toast" class="toast hidden"></div>
+
+<script src="/static/heatmap.js"></script>
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let currentTeam    = null;
+let currentEvent   = null;
+let currentMode    = 'both';
+let loadedHeatmaps = {};   // { team_num: {auto:[],tele:[]} }
+let activeJobs     = {};   // { job_id: { match_key, interval } }
+
+// ── Search ─────────────────────────────────────────────────────────────────
+async function searchTeam() {
+  const num = document.getElementById('teamInput').value.trim();
+  if (!num) return;
+
+  document.getElementById('matchList').innerHTML = '<div class="loading">Loading...</div>';
+  document.getElementById('teamInfo').classList.add('hidden');
+
+  try {
+    const res  = await fetch(`/api/team/${num}`);
+    const data = await res.json();
+    if (data.error) { showToast(data.error, 'error'); return; }
+
+    currentTeam = num;
+    renderTeamInfo(data);
+    renderMatches(data.matches);
+  } catch (e) {
+    showToast('Failed to fetch team data. Is TBA_API_KEY set?', 'error');
+    document.getElementById('matchList').innerHTML = '';
+  }
+}
+
+document.getElementById('teamInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') searchTeam();
+});
+
+// ── Render team info ───────────────────────────────────────────────────────
+function renderTeamInfo(data) {
+  const el = document.getElementById('teamInfo');
+  el.innerHTML = `<strong>Team ${data.team_num}</strong> — ${data.nickname || ''}
+    <br><small>${[data.city, data.state].filter(Boolean).join(', ')}</small>`;
+  el.classList.remove('hidden');
+}
+
+// ── Render match list ──────────────────────────────────────────────────────
+function renderMatches(matches) {
+  const list = document.getElementById('matchList');
+  if (!matches || matches.length === 0) {
+    list.innerHTML = '<div class="empty">No matches found for this season.</div>';
+    return;
+  }
+
+  // Group by event
+  const events = {};
+  for (const m of matches) {
+    if (!events[m.event_key]) events[m.event_key] = [];
+    events[m.event_key].push(m);
+  }
+
+  let html = '';
+  for (const [eventKey, evMatches] of Object.entries(events)) {
+    html += `<div class="event-group">
+      <div class="event-key" onclick="toggleEvent('${eventKey}')">${eventKey}
+        <span class="event-toggle" id="etoggle-${eventKey}">&#9660;</span>
+      </div>
+      <div class="event-matches" id="ematches-${eventKey}">`;
+    for (const m of evMatches) {
+      html += renderMatchRow(m);
+    }
+    html += `</div></div>`;
+  }
+  list.innerHTML = html;
+}
+
+function matchLabel(m) {
+  const level = { 'qm': 'Q', 'sf': 'SF', 'f': 'F', 'ef': 'EF' }[m.comp_level] || m.comp_level;
+  const set   = m.set_number > 1 ? `${m.set_number}-` : '';
+  return `${level}${set}${m.match_number}`;
+}
+
+function renderMatchRow(m) {
+  const label   = matchLabel(m);
+  const isRed   = m.red_teams.includes(currentTeam);
+  const alliance = isRed ? 'red' : 'blue';
+  const teamList = [...m.red_teams, ...m.blue_teams].join(', ');
+  const cached  = m.cached;
+  const hasVideo = m.has_video;
+
+  let statusBadge, actionBtn;
+
+  if (m.job && ['queued','fetching','downloading','detecting','analyzing'].includes(m.job.status)) {
+    statusBadge = `<span class="badge processing" id="badge-${m.match_key}">${m.job.status}</span>`;
+    actionBtn   = `<button class="btn-sm" disabled>Processing...</button>`;
+    // Resume polling
+    schedulePolling(m.job.id, m.match_key, m.event_key);
+  } else if (cached) {
+    statusBadge = `<span class="badge cached" id="badge-${m.match_key}">cached</span>`;
+    actionBtn   = `<button class="btn-sm btn-view" onclick="viewHeatmap('${m.event_key}','${currentTeam}','${m.match_key}')">View</button>`;
+  } else if (!hasVideo) {
+    statusBadge = `<span class="badge no-video" id="badge-${m.match_key}">no video</span>`;
+    actionBtn   = `<button class="btn-sm" disabled title="No YouTube video available">Process</button>`;
+  } else {
+    statusBadge = `<span class="badge ready" id="badge-${m.match_key}">ready</span>`;
+    actionBtn   = `<button class="btn-sm btn-process" onclick="processMatch('${m.match_key}','${m.event_key}',this)">Process</button>`;
+  }
+
+  return `
+    <div class="match-row ${alliance}" id="mrow-${m.match_key}">
+      <div class="match-label">${label}</div>
+      <div class="match-teams">${teamList}</div>
+      ${statusBadge}
+      ${actionBtn}
+    </div>`;
+}
+
+function toggleEvent(key) {
+  const el = document.getElementById(`ematches-${key}`);
+  const icon = document.getElementById(`etoggle-${key}`);
+  el.classList.toggle('collapsed');
+  icon.innerHTML = el.classList.contains('collapsed') ? '&#9650;' : '&#9660;';
+}
+
+// ── Process a match ────────────────────────────────────────────────────────
+async function processMatch(matchKey, eventKey, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Queuing...';
+
+  try {
+    const res  = await fetch('/api/process', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ match_key: matchKey })
+    });
+    const data = await res.json();
+    if (data.error) { showToast(data.error, 'error'); btn.disabled = false; btn.textContent = 'Process'; return; }
+
+    const badge = document.getElementById(`badge-${matchKey}`);
+    if (badge) { badge.className = 'badge processing'; badge.textContent = 'queued'; }
+    btn.textContent = 'Processing...';
+
+    schedulePolling(data.job_id, matchKey, eventKey);
+    showToast(`Match ${matchKey} queued for processing.`);
+  } catch (e) {
+    showToast('Failed to queue job.', 'error');
+    btn.disabled = false; btn.textContent = 'Process';
+  }
+}
+
+function schedulePolling(jobId, matchKey, eventKey) {
+  if (activeJobs[jobId]) return; // already polling
+  const interval = setInterval(async () => {
+    try {
+      const res  = await fetch(`/api/status/${jobId}`);
+      const data = await res.json();
+      const badge = document.getElementById(`badge-${matchKey}`);
+
+      if (data.status === 'done') {
+        clearInterval(interval);
+        delete activeJobs[jobId];
+        if (badge) { badge.className = 'badge cached'; badge.textContent = 'cached'; }
+        // Replace process button with view button
+        const row = document.getElementById(`mrow-${matchKey}`);
+        if (row) {
+          const btn = row.querySelector('button');
+          if (btn) {
+            btn.disabled = false;
+            btn.className = 'btn-sm btn-view';
+            btn.textContent = 'View';
+            btn.setAttribute('onclick', `viewHeatmap('${eventKey}','${currentTeam}','${matchKey}')`);
+          }
+        }
+        showToast(`Match ${matchKey} processed!`);
+      } else if (data.status === 'error') {
+        clearInterval(interval);
+        delete activeJobs[jobId];
+        if (badge) { badge.className = 'badge error'; badge.textContent = 'error'; }
+        const row = document.getElementById(`mrow-${matchKey}`);
+        if (row) {
+          const btn = row.querySelector('button');
+          if (btn) { btn.disabled = false; btn.className = 'btn-sm btn-process'; btn.textContent = 'Retry'; }
+        }
+        showToast(`Error processing ${matchKey}: ${data.error || 'unknown error'}`, 'error');
+      } else {
+        if (badge) badge.textContent = data.status + (data.progress ? ` — ${data.progress}` : '');
+      }
+    } catch (_) {}
+  }, 3000);
+  activeJobs[jobId] = interval;
+}
+
+// ── View heatmap ───────────────────────────────────────────────────────────
+async function viewHeatmap(eventKey, teamNum, matchKey) {
+  currentEvent = eventKey;
+  document.getElementById('canvasPlaceholder').style.display = 'none';
+
+  try {
+    const res  = await fetch(`/api/heatmap/${eventKey}/${teamNum}`);
+    const data = await res.json();
+    if (data.error) { showToast(data.error, 'error'); return; }
+
+    loadedHeatmaps[teamNum] = data;
+    document.getElementById('heatmapTitle').textContent = `Team ${teamNum} — ${eventKey}`;
+    updateTeamChips();
+    redrawHeatmap();
+  } catch (e) {
+    showToast('Failed to load heatmap data.', 'error');
+  }
+}
+
+function updateTeamChips() {
+  const chips = document.getElementById('teamChips');
+  chips.innerHTML = Object.keys(loadedHeatmaps).map(t => `
+    <span class="chip">
+      ${t}
+      <button class="chip-x" onclick="removeTeam('${t}')">&#x2715;</button>
+    </span>
+  `).join('');
+}
+
+function removeTeam(teamNum) {
+  delete loadedHeatmaps[teamNum];
+  updateTeamChips();
+  redrawHeatmap();
+}
+
+function setMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  redrawHeatmap();
+}
+
+function redrawHeatmap() {
+  const canvas = document.getElementById('heatmap');
+  if (Object.keys(loadedHeatmaps).length === 0) return;
+
+  const fieldImg = new Image();
+  fieldImg.src = '/field.png';
+  fieldImg.onload = () => {
+    const W = fieldImg.naturalWidth;
+    const H = fieldImg.naturalHeight;
+    canvas.width  = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(fieldImg, 0, 0, W, H);
+
+    const teams = Object.keys(loadedHeatmaps);
+    teams.forEach((t, idx) => {
+      renderHeatmap(ctx, loadedHeatmaps[t], currentMode, W, H, idx, teams.length);
+    });
+  };
+}
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+let _toastTimer = null;
+function showToast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `toast ${type}`;
+  el.classList.remove('hidden');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.add('hidden'), 4000);
+}
+</script>
+</body>
+</html>

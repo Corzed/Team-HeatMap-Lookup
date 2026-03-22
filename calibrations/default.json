@@ -1,0 +1,8 @@
+{
+  "_comment": "Default full-frame calibration. Positions map the entire video frame as the field. Add event-specific files as calibrations/{event_key}.json for accurate results.",
+  "top_left":     {"x": 0.0, "y": 0.0},
+  "bottom_left":  {"x": 0.0, "y": 1.0},
+  "top_right":    {"x": 1.0, "y": 0.0},
+  "bottom_right": {"x": 1.0, "y": 1.0},
+  "red_on_left":  true
+}
