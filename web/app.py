@@ -31,7 +31,12 @@ for d in (DATA_DIR, MATCHES_DIR, TEMP_DIR, CAL_DIR):
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 from dotenv import load_dotenv
-load_dotenv(ROOT / ".env")
+_env_file = ROOT / ".env"
+try:
+    load_dotenv(_env_file)
+except UnicodeDecodeError:
+    # .env was saved as UTF-16 (common on Windows) — retry with that encoding
+    load_dotenv(_env_file, encoding="utf-16")
 
 TBA_KEY      = os.getenv("TBA_API_KEY", "")
 TBA_BASE     = "https://www.thebluealliance.com/api/v3"
