@@ -68,7 +68,8 @@ def json_sink_callback(prediction, video_frame):
     percent = video_frame.frame_id/total_frames 
     hashtags = round(percent * 10)
     display = round(percent * 1000)/10
-    sys.stdout.write(f"\rInferencing... |{"#" * (hashtags) + "-" * (10 - hashtags)}| {display}% ({video_frame.frame_id}/{total_frames} frames)")
+    bar = '#' * hashtags + '-' * (10 - hashtags)
+    sys.stdout.write(f"\rInferencing... |{bar}| {display}% ({video_frame.frame_id}/{total_frames} frames)")
     sys.stdout.flush()
 
 
