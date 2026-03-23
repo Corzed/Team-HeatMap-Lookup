@@ -7,6 +7,7 @@ Run from project root:  python web/app.py
 import os
 import sys
 import json
+import glob
 import sqlite3
 import subprocess
 import threading
@@ -31,11 +32,16 @@ for d in (DATA_DIR, MATCHES_DIR, TEMP_DIR, CAL_DIR):
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 from dotenv import load_dotenv
-load_dotenv(ROOT / ".env")
+_env_file = ROOT / ".env"
+try:
+    load_dotenv(_env_file)
+except UnicodeDecodeError:
+    # .env was saved as UTF-16 (common on Windows) — retry with that encoding
+    load_dotenv(_env_file, encoding="utf-16")
 
 TBA_KEY      = os.getenv("TBA_API_KEY", "")
 TBA_BASE     = "https://www.thebluealliance.com/api/v3"
-SEASON       = 2025
+SEASON       = 2026
 JAVA_COMPILED = False
 _compile_lock = threading.Lock()
 
@@ -97,9 +103,14 @@ def ensure_java_compiled():
     with _compile_lock:
         if JAVA_COMPILED:
             return
+        # Use glob.glob() to expand *.java — Windows cmd does not do shell glob expansion
+        src_files = (
+            glob.glob(str(ROOT / "src" / "*.java"))
+            + glob.glob(str(ROOT / "json" / "*.java"))
+        )
         result = subprocess.run(
-            ["javac", "src/*.java", "json/*.java"],
-            shell=True, cwd=str(ROOT), capture_output=True, text=True
+            ["javac"] + src_files,
+            cwd=str(ROOT), capture_output=True, text=True
         )
         if result.returncode != 0:
             raise RuntimeError(f"Java compilation failed:\n{result.stderr}")
@@ -177,8 +188,9 @@ def process_job(job):
 
         # Step 4 — run Java analyzer
         update_job(job_id, "analyzing", "Analyzing robot positions...")
+        cp_sep = ";" if sys.platform == "win32" else ":"
         java_args = (
-            ["java", "-cp", "src:json", "AIScout", event_key]
+            ["java", "-cp", f"src{cp_sep}json", "AIScout", event_key]
             + red_teams
             + blue_teams
             + ["--auto", "--json", str(json_path)]
@@ -231,7 +243,7 @@ def field_image():
 
 @app.route("/api/team/<team_num>")
 def get_team(team_num):
-    """Return team info + 2025 matches with video/cached status."""
+    """Return team info + 2026 matches with video/cached status."""
     team_key = f"frc{team_num}"
 
     team_info = tba_get(f"/team/{team_key}") or {}
